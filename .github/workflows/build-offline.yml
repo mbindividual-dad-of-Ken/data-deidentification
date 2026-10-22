@@ -1,0 +1,54 @@
+name: Build Windows Offline Web ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-offline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fixed revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run upstream tests
+        run: npm test
+      - name: Build original application
+        run: npm run build
+      - name: Verify required static assets and prepare offline package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -d dist/assets
+          test -d dist/ocr
+          test -d dist/fonts
+          mkdir -p package/site package/evidence
+          cp -a dist/. package/site/
+          printf '%s\n' "${GITHUB_SHA}" > package/evidence/SOURCE_COMMIT.txt
+          printf '%s\n' "Built using npm ci; npm test; npm run build" > package/evidence/BUILD_STEPS.txt
+          printf '%s\n' "A successful build does not prove absence of network traffic or PII leaks. Test with synthetic files before use." > package/evidence/SECURITY_NOTICE.txt
+          (cd package/site && find . -type f -print0 | sort -z | xargs -0 sha256sum) > package/evidence/SHA256SUMS.txt
+          (cd package && zip -q -r ../data-deidentification-windows-offline.zip site evidence)
+          test -s data-deidentification-windows-offline.zip
+      - name: Upload downloadable full website
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-deidentification-windows-offline
+          path: data-deidentification-windows-offline.zip
+          if-no-files-found: error
+          retention-days: 30
